@@ -1,0 +1,19 @@
+[package]
+name = "kv-program"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+kv-asm = { path = "../kv-asm" }
+pinocchio = "0.7"
+
+[dev-dependencies]
+mollusk-svm = "0.12"
+solana-instruction = "3.4"
+solana-pubkey = "3.0"

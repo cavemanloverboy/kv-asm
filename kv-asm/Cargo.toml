@@ -1,0 +1,25 @@
+[package]
+name = "kv-asm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.65"
+description = "Quote-free inline and global sBPF assembly macros for Solana programs (kv_asm! and kv_global_asm!)."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["solana", "sbpf", "bpf", "asm", "macro"]
+categories = ["development-tools", "no-std"]
+include = [
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
