@@ -139,14 +139,32 @@ Comments (`// …`) and blank source lines are stripped.
 
 ## Scope and limitations
 
-* Designed for **sBPFv2** as accepted by LLVM's BPF backend (the assembler
-  used by `rustc` for `target_os = "solana"` programs).
+* Targets **sBPFv0** — the version mainnet runs and the default for
+  `cargo-build-sbf` (`--arch=v0`). The macro itself is version-agnostic (it's
+  just a token formatter); what's "valid" is decided by LLVM's BPF assembler
+  at compile time and by the on-chain verifier at load time.
 * The macro emits whatever you write — it does not validate mnemonics. If you
-  use a name LLVM doesn't recognize (e.g. `jset`, `*64`-suffixed jump
-  aliases, `uhmul32`), assembly will fail at compile time with the LLVM
-  error.
-* sBPFv0/v1-only mnemonics (`mul*`, `div*`, `mod*`, `neg*`, `lddw`, `le*`)
-  are accepted by the formatter but rejected by the v2 verifier at load time.
+  use a name LLVM doesn't recognize, assembly will fail at compile time with
+  the LLVM error.
+* Mnemonics LLVM's BPF backend **does not accept** (so unreachable from
+  `kv_asm!` / `kv_global_asm!` regardless of sBPF version):
+  - `*64`-suffixed jump aliases (`jeq64`, `jne64`, …, `jsle64`) — use the
+    base spelling (`jeq`, `jne`, …), which already encodes to the v0 64-bit
+    jump opcodes.
+  - `jset`, `jset32`, `jset64`.
+  - `le16`, `le32`, `le64` (the BPF VM is little-endian, so they'd be a
+    no-op anyway — use `be*`).
+  - `uhmul32`, `shmul32`, `hor32`.
+* Mnemonics that **only exist in v2+** and will be rejected by the v0
+  verifier at load time:
+  - PQR family: `lmul*`, `uhmul64`, `shmul64`, `udiv*`, `urem*`, `sdiv*`,
+    `srem*` (instruction class `BPF_PQR = 0x06`, gated on `enable_pqr()`).
+  - `hor64` (gated on `disable_lddw()`). Use `lddw` for wide immediates.
+  - The new store-from-imm/store-from-reg classes (`ST_*B_*`) which share
+    bytes with `mul*` / `div*` / `neg*` / `mod*` and only kick in under
+    `move_memory_instruction_classes()`.
+* Mnemonics that **only exist in v3+**: `*32` jump variants (`jeq32`,
+  `jne32`, …) under `enable_jmp32()`.
 
 ## Testing strategy
 

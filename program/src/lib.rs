@@ -5,32 +5,31 @@
 //! jumps (`ja past_cal_a`) and calls (`call cal_a`) on its own, so `kv_asm!` only has to forward
 //! tokens — it doesn't compute offsets.
 //!
-//! Build with `cargo-build-sbf --arch=v2` (the highest arch with a prebuilt sysroot in
-//! platform-tools v1.52). The body of `process` exercises **every mnemonic that the
-//! [anza/sbpf](https://github.com/anza-xyz/sbpf) assembler accepts and that is valid in
-//! sBPFv2** — see the `make_instruction_map` table in `sbpf/src/assembler.rs` filtered by
-//! `RequisiteVerifier::verify` for `SBPFVersion::V2`.
+//! Build with `cargo-build-sbf` (the default `--arch=v0` is what mainnet runs). The body of
+//! `process` exercises **every classic-BPF mnemonic that the LLVM BPF assembler accepts and
+//! that is valid in sBPFv0** — see the `make_instruction_map` table in `sbpf/src/assembler.rs`
+//! filtered by `RequisiteVerifier::verify` for `SBPFVersion::V0`.
 //!
-//! Mnemonics intentionally **excluded** in v2:
+//! Mnemonics intentionally **excluded** in v0:
 //!
-//! * `mul*`, `div*`, `mod*` — opcodes `0x2f` / `0x3f` / `0x9f` etc. were repurposed in v2 as the
-//!   new store-with-immediate / store-from-register opcodes (`stxb`, `stxh`, `stxdw`, `stw`),
-//!   so writing `mul64 r3, r4` silently assembles to `stxb [r3 + 0], w4`. Use the PQR
-//!   replacements (`lmul`, `udiv`, `sdiv`, `urem`, `srem`).
-//! * `neg*` — same problem (`neg64` opcode `0x87` is now `stw` in v2). Synthesize as
-//!   `mov rX, 0; sub rX, rY; mov rY, rX`.
-//! * `lddw` — disabled in v2; LLVM emits `mov64 + hor64` for wide immediates instead.
-//! * `le16` / `le32` / `le64` — disabled in v2. Use `be*` only.
-//! * `*32` jump variants (`jeq32`, `jne32`, …) — these are v3+ (`enable_jmp32`).
+//! * **PQR family** — `lmul*`, `uhmul64`, `shmul64`, `udiv*`, `urem*`, `sdiv*`, `srem*`. These
+//!   live in the `BPF_PQR = 0x06` instruction class which is gated on `enable_pqr()` (v2 only).
+//! * **`hor64`** — opcode `BPF_ALU64_STORE | BPF_K | BPF_HOR = 0xf7`, gated on
+//!   `disable_lddw()` (v2+ only). v0 uses `lddw` for wide immediates.
+//! * **New store classes** (`ST_*B_IMM/REG`) — share the v0 `mul/div/mod/neg` opcode bits
+//!   (e.g. `MUL64_IMM = ST_1B_IMM = 0x27`, `NEG64 = ST_4B_IMM = 0x87`) and only kick in when
+//!   the verifier sees `move_memory_instruction_classes()` (v2 only). In v0 those bytes
+//!   *are* the classic ALU instructions.
+//! * **`*32` jump variants** (`jeq32`, `jne32`, …) — gated on `enable_jmp32()` (v3+ only).
 //!
 //! Mnemonics in anza/sbpf's table that LLVM's BPF assembler **does not accept** (and which
 //! therefore cannot be produced via `asm!` / `kv_asm!`, only via the standalone sbpf assembler):
 //!
 //! * `*64`-suffixed jump aliases (`jeq64`, `jne64`, …, `jsle64`) — LLVM only accepts the base
-//!   spelling, which already encodes to the v2 `JMP64` opcodes.
+//!   spelling, which already encodes to the v0 64-bit jump opcodes.
 //! * `jset`, `jset32`, `jset64` — no LLVM mnemonic at all.
-//! * `uhmul32`, `shmul32`, `hor32` — anza/sbpf accepts the names; LLVM does not.
-//! * `le16` / `le32` / `le64` — disabled in v2 anyway, see above.
+//! * `le16`, `le32`, `le64` — valid v0 opcodes, but LLVM's BPF backend has no mnemonic for
+//!   them (the VM is little-endian, so these would be a no-op anyway). Use `be*` only.
 
 #![allow(unexpected_cfgs)]
 #![cfg_attr(target_os = "solana", feature(asm_experimental_arch))]
@@ -61,7 +60,7 @@ kv_global_asm!(
     exit
 );
 
-/// Logs `ptr[..len]` via `sol_log_` after running a wide mix of LLVM-legal sBPFv2
+/// Logs `ptr[..len]` via `sol_log_` after running a wide mix of LLVM-legal sBPFv0
 /// instructions. `extern "C"` so the asm stub above can `call process` by symbol;
 /// `#[no_mangle]` so the symbol name is exactly `process`.
 #[cfg(target_os = "solana")]
@@ -72,7 +71,7 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         stxdw [r10 - 8], r1
         stxdw [r10 - 16], r2
 
-        // start museum of every v2 mnemonic in anza/sbpf's `make_instruction_map`
+        // start museum of every v0 mnemonic LLVM accepts
 
         // call (immediate) + exit + ja with named labels
         call cal_a
@@ -85,14 +84,13 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
 
         past_cal_a:
 
-        // 64-bit ALU, register form
-        mov64 r3, 0x44556678
-        lsh64 r3, 32
-        or64 r3, 0x11223344
+        lddw r3, 0x1122334455667788
+
+        // 64-bit ALU, register form (classic BPF — div/mod/mul/neg are *only* valid in v0/v1)
         mov64 r4, 2
-        mov64 r5, 3
         add64 r3, r4
         sub64 r3, r4
+        mul64 r3, r4
         or64 r3, r4
         and64 r3, r4
         lsh64 r3, r4
@@ -100,19 +98,19 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         xor64 r3, r4
         mov64 r3, r4
         arsh64 r3, r4
-        hor64 r3, 0x10000
-        lmul64 r3, r4
-        uhmul64 r3, r4
-        shmul64 r3, r4
-        udiv64 r3, r4
-        urem64 r3, r4
-        sdiv64 r3, r4
-        srem64 r3, r4
+        neg64 r3
+        mov64 r3, 100
+        mov64 r4, 7
+        div64 r3, r4
+        mov64 r3, 100
+        mov64 r4, 6
+        mod64 r3, r4
 
         // 64-bit ALU, immediate form
         mov64 r3, 7
         add64 r3, 2
         sub64 r3, 2
+        mul64 r3, 2
         or64 r3, 2
         and64 r3, 2
         lsh64 r3, 2
@@ -120,26 +118,17 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         xor64 r3, 2
         mov64 r3, 2
         arsh64 r3, 2
-        hor64 r3, 2
-        lmul64 r3, 2
-        uhmul64 r3, 2
-        shmul64 r3, 2
-        udiv64 r3, 2
-        urem64 r3, 2
-        sdiv64 r3, 2
-        srem64 r3, 2
+        mov64 r3, 100
+        div64 r3, 7
+        mov64 r3, 100
+        mod64 r3, 6
 
-        // synthesize negate (no `neg` in v2): r3 = -r3
-        mov64 r3, 5
-        mov64 r4, 0
-        sub64 r4, r3
-        mov64 r3, r4
-
-        // 32-bit ALU, register form (LLVM uses `w` view for 32-bit ops)
+        // 32-bit ALU, register form (LLVM uses `w` register view for 32-bit ops)
         mov32 w3, 0x12345678
         mov32 w4, 1
         add32 w3, w4
         sub32 w3, w4
+        mul32 w3, w4
         or32 w3, w4
         and32 w3, w4
         lsh32 w3, w4
@@ -147,11 +136,19 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         xor32 w3, w4
         mov32 w3, w4
         arsh32 w3, w4
+        neg32 w3
+        mov32 w3, 100
+        mov32 w4, 7
+        div32 w3, w4
+        mov32 w3, 100
+        mov32 w4, 6
+        mod32 w3, w4
 
         // 32-bit ALU, immediate form
         mov32 w3, 7
         add32 w3, 1
         sub32 w3, 1
+        mul32 w3, 2
         or32 w3, 1
         and32 w3, 1
         lsh32 w3, 1
@@ -159,22 +156,12 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         xor32 w3, 1
         mov32 w3, 1
         arsh32 w3, 1
+        mov32 w3, 100
+        div32 w3, 7
+        mov32 w3, 100
+        mod32 w3, 6
 
-        // 32-bit PQR
-        mov32 w3, 0x100
-        mov32 w4, 2
-        lmul32 w3, w4
-        udiv32 w3, w4
-        urem32 w3, w4
-        sdiv32 w3, w4
-        srem32 w3, w4
-        lmul32 w3, 2
-        udiv32 w3, 2
-        urem32 w3, 2
-        sdiv32 w3, 2
-        srem32 w3, 2
-
-        // stores: immediate, then register; all four widths, both classes
+        // stores: immediate, then register; all four widths
         stb [r10 - 24], 0x42
         sth [r10 - 26], 0x1234
         stw [r10 - 28], 0x12345678
@@ -193,7 +180,7 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         ldxw r4, [r3 + 0]
         ldxdw r4, [r3 + -32]
 
-        // 64-bit jumps (base spelling — produces JMP64 opcodes; LLVM rejects the `*64` aliases)
+        // 64-bit jumps (the only flavour in v0; *32 variants are v3+, *64 aliases LLVM rejects)
         mov64 r3, 0
         mov64 r4, 1
         jeq r3, r4, +1
@@ -219,12 +206,9 @@ pub extern "C" fn process(len: u64, ptr: *const u8) -> u64 {
         ja +1
         mov64 r5, r5
 
-        // callx — opcode emitted but skipped at runtime (jeq is always taken)
-        mov64 r9, 0
-        jeq r9, r9, +1
-        callx r9
-
-        // endian (be only — le16/le32/le64 are disabled in v2)
+        // endian — only `be*` is reachable through LLVM's BPF assembler. `le16`/`le32`/`le64`
+        // are valid v0 opcodes but the LLVM backend has no mnemonic for them (they would be
+        // no-ops on the BPF VM's little-endian host anyway).
         mov64 r3, 0x0102
         be16 r3
         mov64 r3, 0x01020304

@@ -29,13 +29,16 @@ fn assert_eq_lines(actual: &[&str], expected: &[&str]) {
     }
 }
 
-// -- 64-bit ALU, register form --------------------------------------------------------------
+// -- 64-bit ALU, register form (v0: includes mul/div/mod/neg, no PQR) -----------------------
 
 #[test]
 fn class_alu64_reg() {
     let lines = kv_asm_array!(
         add64 r3, r4
         sub64 r3, r4
+        mul64 r3, r4
+        div64 r3, r4
+        mod64 r3, r4
         or64 r3, r4
         and64 r3, r4
         lsh64 r3, r4
@@ -43,12 +46,16 @@ fn class_alu64_reg() {
         xor64 r3, r4
         mov64 r3, r4
         arsh64 r3, r4
+        neg64 r3
     );
     assert_eq_lines(
         lines,
         &[
             "add64 r3, r4",
             "sub64 r3, r4",
+            "mul64 r3, r4",
+            "div64 r3, r4",
+            "mod64 r3, r4",
             "or64 r3, r4",
             "and64 r3, r4",
             "lsh64 r3, r4",
@@ -56,6 +63,7 @@ fn class_alu64_reg() {
             "xor64 r3, r4",
             "mov64 r3, r4",
             "arsh64 r3, r4",
+            "neg64 r3",
         ],
     );
 }
@@ -67,6 +75,9 @@ fn class_alu64_imm() {
     let lines = kv_asm_array!(
         add64 r3, 2
         sub64 r3, 2
+        mul64 r3, 2
+        div64 r3, 7
+        mod64 r3, 6
         or64 r3, 2
         and64 r3, 2
         lsh64 r3, 2
@@ -74,7 +85,6 @@ fn class_alu64_imm() {
         xor64 r3, 2
         mov64 r3, 2
         arsh64 r3, 2
-        hor64 r3, 0x10000
         mov64 r3, -1
         mov64 r3, 0x44556678
     );
@@ -83,6 +93,9 @@ fn class_alu64_imm() {
         &[
             "add64 r3, 2",
             "sub64 r3, 2",
+            "mul64 r3, 2",
+            "div64 r3, 7",
+            "mod64 r3, 6",
             "or64 r3, 2",
             "and64 r3, 2",
             "lsh64 r3, 2",
@@ -90,7 +103,6 @@ fn class_alu64_imm() {
             "xor64 r3, 2",
             "mov64 r3, 2",
             "arsh64 r3, 2",
-            "hor64 r3, 0x10000",
             "mov64 r3, -1",
             "mov64 r3, 0x44556678",
         ],
@@ -104,51 +116,38 @@ fn class_alu32() {
     let lines = kv_asm_array!(
         add32 w3, w4
         sub32 w3, 1
+        mul32 w3, w4
+        div32 w3, 7
+        mod32 w3, 6
         mov32 w3, 0x12345678
         arsh32 w3, w4
         lsh32 w3, 1
+        neg32 w3
     );
     assert_eq_lines(
         lines,
         &[
             "add32 w3, w4",
             "sub32 w3, 1",
+            "mul32 w3, w4",
+            "div32 w3, 7",
+            "mod32 w3, 6",
             "mov32 w3, 0x12345678",
             "arsh32 w3, w4",
             "lsh32 w3, 1",
+            "neg32 w3",
         ],
     );
 }
 
-// -- PQR (v2) -------------------------------------------------------------------------------
+// -- lddw (v0's wide-immediate load; replaced by mov+hor in v2+) ----------------------------
 
 #[test]
-fn class_pqr() {
+fn class_lddw() {
     let lines = kv_asm_array!(
-        lmul64 r3, r4
-        uhmul64 r3, r4
-        shmul64 r3, r4
-        udiv64 r3, r4
-        urem64 r3, r4
-        sdiv64 r3, r4
-        srem64 r3, r4
-        lmul32 w3, w4
-        udiv32 w3, 2
+        lddw r3, 0x1122334455667788
     );
-    assert_eq_lines(
-        lines,
-        &[
-            "lmul64 r3, r4",
-            "uhmul64 r3, r4",
-            "shmul64 r3, r4",
-            "udiv64 r3, r4",
-            "urem64 r3, r4",
-            "sdiv64 r3, r4",
-            "srem64 r3, r4",
-            "lmul32 w3, w4",
-            "udiv32 w3, 2",
-        ],
-    );
+    assert_eq_lines(lines, &["lddw r3, 0x1122334455667788"]);
 }
 
 // -- Memory: stores -------------------------------------------------------------------------
@@ -358,13 +357,13 @@ fn end_to_end_museum_excerpt() {
         mov64 r0, 0
         exit
         past_cal_a:
-        mov64 r3, 0x44556678
-        lsh64 r3, 32
-        or64 r3, 0x11223344
+        lddw r3, 0x1122334455667788
+        mov64 r4, 2
         add64 r3, r4
-        hor64 r3, 0x10000
-        lmul64 r3, r4
-        sdiv64 r3, r4
+        mul64 r3, r4
+        div64 r3, 7
+        mod64 r3, 6
+        neg64 r3
         mov32 w3, 0x12345678
         add32 w3, w4
         ldxdw r1, [r10 - 8]
@@ -382,13 +381,13 @@ fn end_to_end_museum_excerpt() {
         "mov64 r0, 0",
         "exit",
         "past_cal_a:",
-        "mov64 r3, 0x44556678",
-        "lsh64 r3, 32",
-        "or64 r3, 0x11223344",
+        "lddw r3, 0x1122334455667788",
+        "mov64 r4, 2",
         "add64 r3, r4",
-        "hor64 r3, 0x10000",
-        "lmul64 r3, r4",
-        "sdiv64 r3, r4",
+        "mul64 r3, r4",
+        "div64 r3, 7",
+        "mod64 r3, 6",
+        "neg64 r3",
         "mov32 w3, 0x12345678",
         "add32 w3, w4",
         "ldxdw r1, [r10-8]",
